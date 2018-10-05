@@ -49,8 +49,13 @@ std::string BAD_NL_STR =
    * how to declare an exclusive scanner state. 
    */ 
 %x comment
+%x quote
+%x triplequote
 
 %%
+
+
+[/]{2}.*                 { /* Single-line comments */ }
 
   /* We start with some tokens that are not value-bearing,
    * i.e., the parser needs to know only which token was matched.
@@ -59,6 +64,7 @@ std::string BAD_NL_STR =
   /* Multi-character punctuation with names */
 ==    { return parser::token::EQUALS; }
 [<]=  { return parser::token::ATMOST; }
+[>]=  { return parser::token::ATLEAST; }
 
 
    /* Single character punctuation.  Because a character
@@ -67,7 +73,8 @@ std::string BAD_NL_STR =
     * JFlex/Cup do not let you do this in Java.
     * Here are a few ... there are more. 
     */
-[-+*/]  { return text()[0]; }
+
+[-+*/\(\)\{\}=,;.:<>]   { return text()[0]; }
 
   /* Keywords are essentially another kind of punctuation,
    * but since they also match the identifier pattern, we
@@ -78,8 +85,18 @@ std::string BAD_NL_STR =
    * Here are a couple of examples. 
    */
 
-class  { return parser::token::CLASS; }
-def    { return parser::token::DEF; }
+class     { return parser::token::CLASS; }
+def       { return parser::token::DEF; }
+extends   { return parser::token::EXTENDS; }
+if        { return parser::token::IF; }
+elif      { return parser::token::ELIF; }
+else      { return parser::token::ELSE; }
+while     { return parser::token::WHILE; }
+return    { return parser::token::RETURN; }
+typecase  { return parser::token::TYPECASE; }
+and       { return parser::token::AND; }
+or        { return parser::token::OR; }
+not       { return parser::token::NOT; }
 
 
    /* The following tokens are value-bearing:
@@ -94,7 +111,33 @@ def    { return parser::token::DEF; }
     * be clobbered by subsequent calls. 
     */
 
-[0-9]+                   { yylval.num = atoi(text()); return parser::token::INT_LIT; }
+[0-9]+                                  { yylval.num = atoi(text()); return parser::token::INT_LIT; }
+[a-zA-Z_][a-zA-Z0-9_]*                  { yylval.str = strdup(text()); return parser::token::IDENT; }
+
+["]{3}                                  { start(triplequote); }
+<triplequote>["]{3}                     { start(INITIAL); return parser::token::STRING_LIT; }
+/* Within a triple-quote, match any character other than 3 consecutive quotes, including newlines */
+<triplequote>([^"]|[\r\n]|["]{2}[^"])*  { yylval.str = strdup(text()); }  
+
+["]                                     { string_buf = ""; start(quote); }
+<quote>["]                              { yylval.str = strdup(string_buf.c_str()); start(INITIAL); return parser::token::STRING_LIT; }
+<quote>[\\]0                            { string_buf += "\0"; }
+<quote>[\\]b                            { string_buf += "\b"; }
+<quote>[\\]t                            { string_buf += "\t"; }
+<quote>[\\]n                            { string_buf += "\n"; }
+<quote>[\\]r                            { string_buf += "\r"; }
+<quote>[\\]f                            { string_buf += "\f"; }
+<quote>[\\]["]                          { string_buf += "\""; }
+<quote>[\\]{2}                          { string_buf += "\\"; }
+<quote>[\\](.|[\r\n])                   { report::error("Illegal escape sequence '" + std::string(text()) + "'"+
+                                                        " at line " + std::to_string(lineno()) +
+                                                        ", column " + std::to_string(columno())); }
+<quote>[\r\n]                           { report::error("Unexpected newline or end of string at line " + std::to_string(lineno()) +
+                                                        ", column " + std::to_string(columno())); 
+                                                        yylval.str = strdup(string_buf.c_str()); 
+                                                        start(INITIAL); 
+                                                        return parser::token::STRING_LIT; }
+<quote>[^\r\n"\\]*                      { string_buf += std::string(text()); }
 
   /* You *can* write a one-line regular expression for matching a quoted string,
    * but you probably can't read it.  (I can't read mine.)  Scanner states and
